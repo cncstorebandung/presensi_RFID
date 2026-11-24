@@ -1,0 +1,443 @@
+
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <base target="_top">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1">
+
+  <title>Absensi RFID ESP32</title>
+
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #f4f7fb;
+      color: #17253c;
+    }
+
+    header {
+      background: #15243b;
+      color: white;
+      padding: 24px 6%;
+    }
+
+    header h1 {
+      font-size: 24px;
+      margin: 5px 0;
+    }
+
+    header p {
+      color: #b9c7dc;
+      margin: 0;
+      font-size: 13px;
+    }
+
+    main {
+      max-width: 1100px;
+      margin: 25px auto;
+      padding: 0 18px;
+    }
+
+    .card {
+      background: white;
+      padding: 22px;
+      border-radius: 14px;
+      border: 1px solid #e3e9f0;
+      margin-bottom: 20px;
+    }
+
+    .login {
+      max-width: 400px;
+      margin: 75px auto;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 15px;
+    }
+
+    .number {
+      font-size: 34px;
+      font-weight: bold;
+      margin: 10px 0;
+    }
+
+    .muted {
+      color: #718096;
+      font-size: 13px;
+    }
+
+    input, button {
+      font: inherit;
+      padding: 12px;
+      border-radius: 8px;
+    }
+
+    input {
+      border: 1px solid #d5deea;
+      width: 100%;
+      min-width: 0;
+    }
+
+    button {
+      cursor: pointer;
+      border: none;
+      background: #1c65c9;
+      color: white;
+      font-weight: bold;
+    }
+
+    button:disabled {
+      opacity: .5;
+      cursor: wait;
+    }
+
+    .secondary {
+      background: #e8eef6;
+      color: #17253c;
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 15px 0;
+    }
+
+    .toolbar input {
+      flex: 1;
+      min-width: 150px;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      text-align: left;
+    }
+
+    th, td {
+      padding: 13px;
+      border-bottom: 1px solid #edf0f5;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    th {
+      background: #f3f6fb;
+      color: #526277;
+    }
+
+    .badge {
+      color: #16804a;
+      background: #e5f7ed;
+      border-radius: 20px;
+      padding: 5px 10px;
+      font-size: 11px;
+      font-weight: bold;
+    }
+
+    .hidden { display: none; }
+
+    #pesan {
+      font-size: 13px;
+      margin-top: 12px;
+      color: #b42318;
+    }
+
+    @media(max-width:600px) {
+      .stats {
+        grid-template-columns: 1fr;
+      }
+
+      header h1 {
+        font-size: 21px;
+      }
+
+      .number {
+        font-size: 28px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+<header>
+  <h1>ABSENSI RFID</h1>
+  <p>ESP32 • Google Sheets • Dashboard Siswa</p>
+</header>
+
+<main>
+
+  <section id="login" class="card login">
+    <h2>Login Admin</h2>
+    <p class="muted">
+      Masukkan PIN untuk melihat data absensi.
+    </p>
+
+    <input type="password"
+           id="pin"
+           placeholder="PIN Admin">
+
+    <br><br>
+
+    <button style="width:100%"
+            onclick="login()">
+      Masuk Dashboard
+    </button>
+
+    <p id="pesan"></p>
+  </section>
+
+  <section id="dashboard" class="hidden">
+
+    <div class="stats">
+
+      <div class="card">
+        <div class="muted">Total Siswa</div>
+        <div class="number" id="total">0</div>
+      </div>
+
+      <div class="card">
+        <div class="muted">Hadir Hari Ini</div>
+        <div class="number" id="hadir">0</div>
+      </div>
+
+      <div class="card">
+        <div class="muted">Belum Hadir</div>
+        <div class="number" id="belum">0</div>
+      </div>
+
+    </div>
+
+    <div class="card">
+
+      <h2>Riwayat Absensi</h2>
+      <p class="muted" id="info">
+        Memuat data...
+      </p>
+
+      <div class="toolbar">
+
+        <input
+          type="text"
+          id="cari"
+          placeholder="Cari nama / kelas..."
+          oninput="renderTabel()">
+
+        <input
+          type="date"
+          id="tanggal"
+          onchange="renderTabel()">
+
+        <button class="secondary"
+                onclick="resetFilter()">
+          Semua Tanggal
+        </button>
+
+        <button onclick="downloadExcel()">
+          Download Excel
+        </button>
+
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>No</th>
+              <th>Tanggal</th>
+              <th>Nama</th>
+              <th>Kelas</th>
+              <th>Jam Masuk</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+
+          <tbody id="isiTabel">
+          </tbody>
+        </table>
+      </div>
+
+    </div>
+
+  </section>
+
+</main>
+
+<script>
+  let adminPin = "";
+  let semuaData = [];
+  let excelUrl = "";
+  let sedangMemuat = false;
+
+  function login() {
+    adminPin = document
+      .getElementById("pin").value.trim();
+
+    if (!adminPin) {
+      document.getElementById("pesan")
+        .textContent = "Masukkan PIN dahulu";
+      return;
+    }
+
+    document.getElementById("pesan")
+      .textContent = "Memeriksa PIN...";
+
+    google.script.run
+      .withSuccessHandler(function(hasil) {
+
+        document.getElementById("login")
+          .classList.add("hidden");
+
+        document.getElementById("dashboard")
+          .classList.remove("hidden");
+
+        document.getElementById("tanggal")
+          .value = hasil.tanggalHariIni;
+
+        tampilkanData(hasil);
+
+      })
+      .withFailureHandler(function(error) {
+        document.getElementById("pesan")
+          .textContent = error.message;
+      })
+      .getDashboard(adminPin);
+  }
+
+  function tampilkanData(hasil) {
+    semuaData = hasil.data;
+    excelUrl = hasil.exportUrl;
+
+    document.getElementById("total")
+      .textContent = hasil.totalSiswa;
+
+    document.getElementById("hadir")
+      .textContent = hasil.hadirHariIni;
+
+    document.getElementById("belum")
+      .textContent = hasil.belumHadir;
+
+    document.getElementById("info")
+      .textContent =
+      "Update terakhir: " +
+      new Date().toLocaleTimeString("id-ID");
+
+    renderTabel();
+  }
+
+  function renderTabel() {
+    const cari = document
+      .getElementById("cari")
+      .value.toLowerCase();
+
+    const tanggal = document
+      .getElementById("tanggal").value;
+
+    const filtered = semuaData
+      .filter(r => {
+        const cocokNama =
+          r.nama.toLowerCase().includes(cari) ||
+          r.kelas.toLowerCase().includes(cari);
+
+        const cocokTanggal =
+          !tanggal || r.tanggal === tanggal;
+
+        return cocokNama && cocokTanggal;
+      })
+      .reverse();
+
+    const tbody = document
+      .getElementById("isiTabel");
+
+    tbody.replaceChildren();
+
+    if (filtered.length === 0) {
+      const tr = document.createElement("tr");
+      const td = document.createElement("td");
+
+      td.colSpan = 6;
+      td.textContent = "Belum ada data absensi";
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+      return;
+    }
+
+    filtered.forEach((r, index) => {
+
+      const tr = document.createElement("tr");
+
+      [
+        index + 1,
+        r.tanggal,
+        r.nama,
+        r.kelas,
+        r.jam,
+        r.status
+      ].forEach((value, col) => {
+
+        const td = document.createElement("td");
+
+        if (col === 5) {
+          const span = document.createElement("span");
+          span.className = "badge";
+          span.textContent = value;
+          td.appendChild(span);
+        } else {
+          td.textContent = value;
+        }
+
+        tr.appendChild(td);
+      });
+
+      tbody.appendChild(tr);
+    });
+  }
+
+  function resetFilter() {
+    document.getElementById("tanggal").value = "";
+    document.getElementById("cari").value = "";
+    renderTabel();
+  }
+
+  function downloadExcel() {
+    if (!excelUrl) return;
+
+    // Membutuhkan akses ke file Google Sheets.
+    window.open(excelUrl, "_blank");
+  }
+
+  function refreshData() {
+    if (!adminPin || sedangMemuat) return;
+
+    sedangMemuat = true;
+
+    google.script.run
+      .withSuccessHandler(function(hasil) {
+        sedangMemuat = false;
+        tampilkanData(hasil);
+      })
+      .withFailureHandler(function(error) {
+        sedangMemuat = false;
+        document.getElementById("info")
+          .textContent = "Gagal refresh: " +
+          error.message;
+      })
+      .getDashboard(adminPin);
+  }
+
+  // Refresh setiap 15 detik
+  setInterval(refreshData, 15000);
+</script>
+
+</body>
+</html>

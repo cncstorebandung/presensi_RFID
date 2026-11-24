@@ -1,0 +1,270 @@
+
+const CONFIG = {
+  SHEET: "ABSENSI",
+  ZONA: "Asia/Jakarta",
+
+  // GANTI DENGAN TOKEN MILIKMU
+  API_TOKEN: "SESUIKAN",
+
+  // GANTI DENGAN PIN ADMIN MILIKMU
+  ADMIN_PIN: "1111111"
+};
+
+// DATABASE 5 SISWA
+const SISWA = [
+  {
+    nama: "FAHRI UDIN",
+    kelas: "12 ELEKTRO 1",
+    uid: "FB8EC101"
+  },
+  {
+    nama: "SAMSUDIN",
+    kelas: "11 TKJ 1",
+    uid: "24B9F603"
+  },
+  {
+    nama: "JAMALUDIN",
+    kelas: "12 RPL 3",
+    uid: "5E2B4B06"
+  },
+  {
+    nama: "AMIRUDIN",
+    kelas: "10 TKJ 1",
+    uid: "D03D085F"
+  },
+  {
+    nama: "KOMARUDIN",
+    kelas: "11 TKR 2",
+    uid: "9EEEC001"
+  }
+];
+
+// ====================================
+// SETUP DATABASE
+// ====================================
+function setupDatabase() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(CONFIG.SHEET);
+
+  if (!sheet) {
+    sheet = ss.insertSheet(CONFIG.SHEET);
+  }
+
+  const headers = [
+    "TANGGAL",
+    "NAMA",
+    "KELAS",
+    "JAM MASUK",
+    "UID",
+    "STATUS"
+  ];
+
+  if (sheet.getLastRow() === 0) {
+    sheet.appendRow(headers);
+  }
+
+  sheet.getRange(1, 1, 1, 6)
+    .setBackground("#15243B")
+    .setFontColor("#FFFFFF")
+    .setFontWeight("bold");
+
+  sheet.setFrozenRows(1);
+  sheet.setColumnWidths(1, 6, 160);
+
+  sheet.getRange("A:F").setNumberFormat("@");
+
+  return "Database siap!";
+}
+
+// ====================================
+// WEBSITE DAN ENDPOINT ESP32
+// ====================================
+function doGet(e) {
+  const p = e && e.parameter ? e.parameter : {};
+
+  if (p.action === "scan") {
+    const hasil = prosesScan(p.uid, p.token);
+
+    return ContentService
+      .createTextOutput(JSON.stringify(hasil))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
+  return HtmlService
+    .createHtmlOutputFromFile("Index")
+    .setTitle("Dashboard Absensi RFID");
+}
+
+// ====================================
+// PROSES ABSENSI
+// ====================================
+function prosesScan(uid, token) {
+
+  if (token !== CONFIG.API_TOKEN) {
+    return {
+      status: "ERROR",
+      pesan: "Token tidak valid"
+    };
+  }
+
+  uid = String(uid || "")
+    .trim()
+    .toUpperCase();
+
+  const siswa = SISWA.find(s => s.uid === uid);
+
+  if (!siswa) {
+    return {
+      status: "UNKNOWN",
+      pesan: "Kartu tidak terdaftar"
+    };
+  }
+
+  // Mencegah dua request bersamaan
+  const lock = LockService.getScriptLock();
+
+  if (!lock.tryLock(15000)) {
+    return {
+      status: "ERROR",
+      pesan: "Server sibuk, coba lagi"
+    };
+  }
+
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName(CONFIG.SHEET);
+
+    if (!sheet) {
+      throw new Error("Sheet ABSENSI tidak ditemukan");
+    }
+
+    const sekarang = new Date();
+
+    const tanggal = Utilities.formatDate(
+      sekarang,
+      CONFIG.ZONA,
+      "yyyy-MM-dd"
+    );
+
+    const jam = Utilities.formatDate(
+      sekarang,
+      CONFIG.ZONA,
+      "HH:mm:ss"
+    );
+
+    // PENTING:
+    // SELALU BACA DATA TERBARU DARI SHEET
+    // TIDAK MENGGUNAKAN CACHE ABSENSI
+
+    const lastRow = sheet.getLastRow();
+    let sudahAbsen = false;
+
+    if (lastRow > 1) {
+      const data = sheet
+        .getRange(2, 1, lastRow - 1, 6)
+        .getDisplayValues();
+
+      sudahAbsen = data.some(row =>
+        String(row[0]).trim() === tanggal &&
+        String(row[4]).trim().toUpperCase() === uid
+      );
+    }
+
+    // SUDAH ABSEN HARI INI
+    if (sudahAbsen) {
+      return {
+        status: "DUPLICATE",
+        nama: siswa.nama,
+        kelas: siswa.kelas,
+        pesan: "Sudah absen hari ini"
+      };
+    }
+
+    // BELUM ABSEN ATAU DATA SUDAH DIHAPUS
+    // BOLEH ABSEN LAGI
+    sheet.appendRow([
+      tanggal,
+      siswa.nama,
+      siswa.kelas,
+      jam,
+      uid,
+      "HADIR"
+    ]);
+
+    SpreadsheetApp.flush();
+
+    return {
+      status: "OK",
+      nama: siswa.nama,
+      kelas: siswa.kelas,
+      tanggal: tanggal,
+      jam: jam,
+      pesan: "Berhasil absen"
+    };
+
+  } catch (error) {
+    return {
+      status: "ERROR",
+      pesan: String(error.message)
+    };
+
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// ====================================
+// DATA DASHBOARD WEBSITE
+// ====================================
+function getDashboard(pin) {
+  if (String(pin) !== CONFIG.ADMIN_PIN) {
+    throw new Error("PIN admin salah");
+  }
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(CONFIG.SHEET);
+
+  if (!sheet) {
+    throw new Error("Database belum disiapkan");
+  }
+
+  const lastRow = sheet.getLastRow();
+
+  const rows = lastRow > 1
+    ? sheet.getRange(2, 1, lastRow - 1, 6)
+        .getDisplayValues()
+    : [];
+
+  const data = rows.map(row => ({
+    tanggal: row[0],
+    nama: row[1],
+    kelas: row[2],
+    jam: row[3],
+    uid: row[4],
+    status: row[5]
+  }));
+
+  const hariIni = Utilities.formatDate(
+    new Date(),
+    CONFIG.ZONA,
+    "yyyy-MM-dd"
+  );
+
+  const hadir = new Set(
+    data
+      .filter(r => r.tanggal === hariIni)
+      .map(r => r.uid)
+  );
+
+  return {
+    data: data,
+    tanggalHariIni: hariIni,
+    totalSiswa: SISWA.length,
+    hadirHariIni: hadir.size,
+    belumHadir: SISWA.length - hadir.size,
+    exportUrl: ss.getUrl().replace(
+      /\/edit.*$/,
+      "/export?format=xlsx"
+    )
+  };
+}
